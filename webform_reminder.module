@@ -1,0 +1,107 @@
+<?php
+
+/**
+ * Implements hook_cron().
+ */
+function webform_reminder_cron() {
+
+  $storage = \Drupal::entityTypeManager()
+    ->getStorage('webform_submission');
+
+  $ids = $storage->getQuery()
+    ->condition('webform_id', 'pos_doutorandos_teste')
+    ->accessCheck(FALSE)
+    ->execute();
+
+  $submissions = $storage->loadMultiple($ids);
+
+  foreach ($submissions as $submission) {
+
+    $data = $submission->getData();
+
+    if (empty($data['fim'])) {
+      continue;
+    }
+
+    if (!empty($data['lembrete_fim_enviado'])) {
+      continue;
+    }
+
+    $fim = strtotime($data['fim']);
+
+    $dias = floor(
+      ($fim - strtotime(date('Y-m-d'))) / 86400
+    );
+
+    if ($dias <= 30 && $dias > 0) {
+
+      $email = $data['email'] ?? null;
+
+      if (empty($email)) {
+        \Drupal::logger('webform_reminder')->error(
+          'Email não encontrado na submissão ID: ' . $submission->id()
+        );
+        continue;
+      }
+
+      enviar_lembrete($email, $data);
+
+      $data['lembrete_fim_enviado'] = 1;
+
+      $submission->setData($data);
+
+      $submission->save();
+
+    }
+
+  }
+
+}
+
+/**
+ * Envia e-mail.
+ */
+function enviar_lembrete($email, $data) {
+
+  $nome = $data['nome'] ?? 'Usuário';
+  $inicio = $data['inicio'] ?? '';
+  $fim = $data['fim'] ?? '';
+
+  $params = [
+    'subject' => 'Lembrete de prazo do pós-doc',
+    'message' =>
+      "Olá $nome,\n\n" .
+      "Este é um lembrete automático do sistema.\n\n" .
+      "Início do período: $inicio\n" .
+      "Fim do período: $fim\n\n" .
+      "Faltam 30 dias para o encerramento do seu período.\n\n" .
+      "Atenciosamente,\nSecretaria de Antropologia"
+  ];
+
+  \Drupal::service('plugin.manager.mail')->mail(
+    'webform_reminder',
+    'lembrete',
+    $email,
+    'pt-br',
+    $params
+  );
+
+}
+
+/**
+ * Implements hook_mail().
+ */
+function webform_reminder_mail($key, &$message, $params) {
+
+  switch ($key) {
+
+    case 'lembrete':
+
+      $message['subject'] = $params['subject'];
+
+      // IMPORTANTE: usar string direta (não array)
+      $message['body'] = [$params['message']];
+
+      break;
+  }
+}
